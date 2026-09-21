@@ -1,0 +1,46 @@
+
+services:
+
+  api_client:
+    build:
+      context: ./carpart-client-api
+      dockerfile: Dockerfile.api
+    container_name: carpart-api-client
+    ports:
+      - "7000:7000"
+    environment:
+      - MONGO_URL=mongodb://mongo_client:27017
+      - MONGO_DB=carpartClient
+      - MONGO_COLLECTION=clients
+
+  mongo_client:
+    image: mongo:7.0
+    container_name: mongoClient
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo_client:/data/db
+  
+  api_product:
+    build:
+      context: ./carpart-api
+      dockerfile: Dockerfile.api
+    container_name: carpart-api-product
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URL=mongodb://mongo_product:27017
+      - MONGO_DB=carpartProduct
+      - MONGO_COLLECTION=products
+
+  mongo_product:
+    image: mongo:7.0
+    container_name: mongoProduct
+    ports:
+      - "2701:27017"
+    volumes:
+      - mongo_product:/data/db
+  
+volumes:
+  mongo_client:
+  mongo_product:
