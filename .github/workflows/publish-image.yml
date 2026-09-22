@@ -40,7 +40,7 @@ jobs:
         with:
           context: .
           push: true
-          tags: 
-            - ghcr.io/${{ env.OWNER_LC }}/carpart:latest
-            - ${{ secrets.DOCKERHUB_USERNAME }}/carpart:latest
+          tags: |
+            ghcr.io/${{ env.OWNER_LC }}/carpart:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/carpart:latest
 
