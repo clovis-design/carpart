@@ -35,12 +35,22 @@ jobs:
         env:
           OWNER: ${{ github.repository_owner }}
 
-      - name: Build and Push
+      - name: Build and Push Carpart API Image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./carpart-api
           push: true
           tags: |
-            ghcr.io/${{ env.OWNER_LC }}/carpart:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/carpart:latest
+            ghcr.io/${{ env.OWNER_LC }}/carpart_api:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/carpart_api:latest
+
+
+      - name: Build and Push Carpart Client API Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./carpart-client-api
+          push: true
+          tags: |
+            ghcr.io/${{ env.OWNER_LC }}/carpart_client_api:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/carpart_client_api:latest
 
