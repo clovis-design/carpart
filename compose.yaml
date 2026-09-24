@@ -9,17 +9,32 @@ services:
     ports:
       - "7000:7000"
     environment:
-      - MONGO_URL=mongodb://mongo_client:27017
-      - MONGO_DB=carpartClient
-      - MONGO_COLLECTION=clients
+      - MYSQL_HOST=mysql_client
+      - MYSQL_PORT=3306
+      - MYSQL_DATABASE=carpart_clients
+      - MYSQL_USER=carpart
+      - MYSQL_PASSWORD=carpart_dev
+    depends_on:
+      mysql_client:
+        condition: service_healthy
 
-  mongo_client:
-    image: mongo:7.0
-    container_name: mongoClient
+  mysql_client:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: carpart_clients
+      MYSQL_USER: carpart
+      MYSQL_PASSWORD: carpart_dev
+      MYSQL_ROOT_PASSWORD: root_dev
     ports:
-      - "27018:27017"
+      - "3307:3306"
     volumes:
-      - mongo_client:/data/db
+      - mysql_client:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysql -h 127.0.0.1 -u $$MYSQL_USER $$MYSQL_DATABASE -e 'SELECT 1'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
   
   api_product:
     build:
@@ -43,4 +58,5 @@ services:
   
 volumes:
   mongo_client:
+  mysql_client:
   mongo_product:

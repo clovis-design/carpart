@@ -1,123 +1,100 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, status
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, HTTPException, Path, Query, status
 from fastapi.responses import JSONResponse
-from bson import ObjectId
-from pymongo.errors import DuplicateKeyError
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
-from .database import get_collection, get_client, MONGO_COLLECTION
-from .models import ClientCreate, ClientUpdate
-
-
-def serialize_client(doc: dict) -> dict:
-    """Convertit un document Mongo en dict JSON sérialisable."""
-    doc["id"] = str(doc.pop("_id"))
-    return doc
+from .database import Base, engine, get_db
+from .models import Client, ClientCreate, ClientRead, ClientUpdate
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Vérifie la connexion au démarrage
     try:
-        client = get_client()
-        await client.admin.command("ping")
-        print("Connecté à MongoDB")
-    except Exception as e:
-        print(f"Impossible de se connecter à MongoDB: {e}")
-    yield
-    if get_client() is not None:
-        get_client().close()
+        Base.metadata.create_all(bind=engine)
+        yield
+    finally:
+        engine.dispose()
 
 
 app = FastAPI(
-    title="CarPart - API Gestion des Stocks",
-    description="API de gestion des stocks de pièces détachées pour CarPart",
+    title="CarPart - API Gestion des Clients",
+    description="Gestion des fiches clients et du nombre de commandes saisi par les employés.",
     version="1.0.0",
     lifespan=lifespan,
 )
 
+Database = Annotated[Session, Depends(get_db)]
+ClientId = Annotated[int, Path(gt=0)]
+
+
+def find_client(db: Session, client_id: int) -> Client:
+    client = db.get(Client, client_id)
+    if client is None:
+        raise HTTPException(status_code=404, detail="Client non trouvé")
+    return client
+
 
 @app.get("/", tags=["Health"])
-async def root():
-    return {"message": "CarPart API - Gestion des stocks", "status": "ok"}
+def root():
+    return {"message": "CarPart API - Gestion des clients", "status": "ok"}
 
 
 @app.get("/health", tags=["Health"])
-async def health():
+def health(db: Database):
     try:
-        await get_client().admin.command("ping")
+        db.execute(text("SELECT 1"))
         return {"status": "ok", "database": "connected"}
-    except Exception as e:
+    except SQLAlchemyError:
         return JSONResponse(
-            status_code=503, content={"status": "error", "database": "disconnected", "detail": str(e)}
+            status_code=503, content={"status": "error", "database": "disconnected"}
         )
 
 
-# --- CRUD Produits ---
-
-@app.post("/clients", status_code=status.HTTP_201_CREATED, tags=["Clients"])
-async def create_client(client: ClientCreate):
-    """Ajouter un client."""
-    collection = get_collection()
-    doc = client.model_dump()
-    result = await collection.insert_one(doc)
-    created = await collection.find_one({"_id": result.inserted_id})
-    return serialize_client(created)
-
-
-@app.get("/clients", tags=["Clients"])
-async def list_clients(skip: int = 0, limit: int = 100):
-    """Lister tous les clients."""
-    collection = get_collection()
-    cursor = collection.find().skip(skip).limit(limit)
-    clients = [serialize_client(doc) async for doc in cursor]
-    return clients
+@app.post("/clients", response_model=ClientRead,
+          status_code=status.HTTP_201_CREATED, tags=["Clients"])
+def create_client(payload: ClientCreate, db: Database):
+    """Ajouter un client, avec zéro commande par défaut."""
+    client = Client(**payload.model_dump())
+    db.add(client)
+    db.commit()
+    db.refresh(client)
+    return client
 
 
-@app.get("/clients/{client_id}", tags=["Clients"])
-async def get_client(client_id: str):
-    """Accéder au descriptif du client et la quantité restante."""
-    collection = get_collection()
-    try:
-        oid = ObjectId(client_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="ID invalide")
-    doc = await collection.find_one({"_id": oid})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Client non trouvé")
-    return serialize_client(doc)
+@app.get("/clients", response_model=list[ClientRead], tags=["Clients"])
+def list_clients(db: Database, skip: int = Query(0, ge=0),
+                 limit: int = Query(100, ge=1, le=1000)):
+    return db.scalars(select(Client).order_by(Client.id).offset(skip).limit(limit)).all()
 
 
-@app.put("/clients/{client_id}", tags=["Clients"])
-async def update_client(client_id: str, payload: ClientUpdate):
-    """Modifier un client (descriptif, quantité, etc.)."""
-    collection = get_collection()
-    try:
-        oid = ObjectId(client_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="ID invalide")
+@app.get("/clients/{client_id}", response_model=ClientRead, tags=["Clients"])
+def get_client(client_id: ClientId, db: Database):
+    """Consulter une fiche client."""
+    return find_client(db, client_id)
 
-    update_data = {k: v for k, v in payload.model_dump().items() if v is not None}
-    if not update_data:
+
+@app.put("/clients/{client_id}", response_model=ClientRead, tags=["Clients"])
+def update_client(client_id: ClientId, payload: ClientUpdate, db: Database):
+    """Modifier les champs fournis, dont le nombre de commandes saisi par un employé."""
+    client = find_client(db, client_id)
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
         raise HTTPException(status_code=400, detail="Aucun champ à mettre à jour")
-
-    result = await collection.update_one({"_id": oid}, {"$set": update_data})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Client non trouvé")
-
-    doc = await collection.find_one({"_id": oid})
-    return serialize_client(doc)
+    for field, value in updates.items():
+        setattr(client, field, value)
+    db.commit()
+    db.refresh(client)
+    return client
 
 
 @app.delete("/clients/{client_id}", tags=["Clients"])
-async def delete_client(client_id: str):
-    """Supprimer un client."""
-    collection = get_collection()
-    try:
-        oid = ObjectId(client_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="ID invalide")
-
-    result = await collection.delete_one({"_id": oid})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Client non trouvé")
+def delete_client(client_id: ClientId, db: Database):
+    """Supprimer une fiche client."""
+    client = find_client(db, client_id)
+    db.delete(client)
+    db.commit()
     return {"message": "Client supprimé", "id": client_id}

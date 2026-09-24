@@ -1,20 +1,28 @@
 import os
-from motor.motor_asyncio import AsyncIOMotorClient
 
-MONGO_URL = os.getenv("MONGO_URL", "mongodb://localhost:27018")
-MONGO_DB = os.getenv("MONGO_DB", "carpartClient")
-MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "clients")
+from dotenv import load_dotenv
+from sqlalchemy import URL, create_engine
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-client: AsyncIOMotorClient | None = None
+load_dotenv()
 
-def get_client() -> AsyncIOMotorClient:
-    global client
-    if client is None:
-        client = AsyncIOMotorClient(MONGO_URL)
-    return client
+database_url = URL.create(
+    "mysql+pymysql",
+    username=os.getenv("MYSQL_USER", "carpart"),
+    password=os.getenv("MYSQL_PASSWORD", "carpart_dev"),
+    host=os.getenv("MYSQL_HOST", "localhost"),
+    port=int(os.getenv("MYSQL_PORT", "3307")),
+    database=os.getenv("MYSQL_DATABASE", "carpart_clients"),
+    query={"charset": "utf8mb4"},
+)
+engine = create_engine(database_url, pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=engine)
 
-def get_collection():
-    return get_client()[MONGO_DB][MONGO_COLLECTION]
+
+class Base(DeclarativeBase):
+    pass
+
 
 def get_db():
-    return get_client()[MONGO_DB]
+    with SessionLocal() as session:
+        yield session

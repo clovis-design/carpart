@@ -1,63 +1,105 @@
-# CarPart - API Gestion des Stocks
+# CarPart — API de gestion des clients
 
-API FastAPI + MongoDB pour la gestion des stocks de pièces détachées.
+API développée avec **Python 3.10+**, **FastAPI** et **MySQL 8.4** via SQLAlchemy
+et PyMySQL. L'image Docker utilise Python 3.11.
 
-## Endpoints
+Une fiche contient un identifiant entier généré par MySQL, un nom, un prénom,
+une adresse e-mail valide et un nombre entier de commandes positif ou nul.
+Les commandes sont passées par mail : les employés mettent manuellement à jour
+`nbCommande` ; l'API ne traite pas les mails.
+
+## Lancement avec Docker Compose
+
+Depuis le dossier parent `carpart` :
+
+```bash
+docker compose up --build -d api_client
+```
+
+Cette commande démarre MySQL, attend qu'il soit prêt, puis démarre l'API.
+La table `clients` est créée automatiquement au démarrage. Les données sont
+conservées dans le volume `mysql_client`.
+
+- API : http://localhost:7000
+- Swagger (pour tester les routes) : http://localhost:7000/docs
+- État de la connexion MySQL : http://localhost:7000/health
+
+## Lancement local
+
+Depuis `carpart`, démarrer la base :
+
+```bash
+docker compose up -d mysql_client
+```
+
+Puis, depuis `carpart-client-api` :
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 7000
+```
+
+La configuration peut être fournie par variables d'environnement ou dans un
+fichier `.env` local (chargé par python-dotenv) :
+
+| Variable | Valeur par défaut |
+|----------|-------------------|
+| `MYSQL_HOST` | `localhost` |
+| `MYSQL_PORT` | `3307` |
+| `MYSQL_DATABASE` | `carpart_clients` |
+| `MYSQL_USER` | `carpart` |
+| `MYSQL_PASSWORD` | `carpart_dev` |
+
+Ces identifiants correspondent à l'environnement de développement du Compose.
+MySQL est exposé sur le port local 3307 ; les conteneurs utilisent le port 3306.
+Pour une base MySQL existante, créer au préalable la base et un utilisateur
+ayant les droits de création de table, lecture, insertion, modification et suppression.
+
+## Routes
 
 | Méthode | Route | Description |
 |---------|-------|-------------|
-| POST | /products | Ajouter un produit |
-| GET | /products | Lister les produits |
-| GET | /products/{id} | Descriptif + quantité restante |
-| PUT | /products/{id} | Modifier descriptif / quantité |
-| PATCH | /products/{id}/quantity | Ajouter/réduire quantité (delta) |
-| DELETE | /products/{id} | Supprimer un produit |
-| GET | /health | État de la BDD |
-| GET | /docs | Documentation Swagger |
+| POST | `/clients` | Ajouter un client (201) |
+| GET | `/clients?skip=0&limit=100` | Lister les clients avec pagination |
+| GET | `/clients/{id}` | Consulter une fiche client |
+| PUT | `/clients/{id}` | Modifier les champs fournis d'une fiche |
+| DELETE | `/clients/{id}` | Supprimer un client |
+| GET | `/health` | État de MySQL (200 ou 503) |
 
-## Lancement manuel (sans compose, comme demandé)
+`nom`, `prenom` et `mail` sont obligatoires à la création. `nbCommande` vaut 0
+par défaut. Les noms ne peuvent pas être vides ; les nombres de commandes
+fractionnaires, négatifs ou supérieurs à 2147483647 sont refusés.
+Une modification conserve les champs omis et refuse les valeurs `null`.
+Une fiche inexistante retourne 404, un corps invalide 422 et une modification
+vide 400. Les identifiants sont des entiers strictement positifs.
 
-### 1. Build des images
-
-```bash
-docker build -f Dockerfile.mongo -t carpart-mongo .
-docker build -f Dockerfile.api -t carpart-api .
-```
-
-### 2. Créer un réseau
+## Exemple de cycle complet
 
 ```bash
-docker network create carpart-net
+curl -X POST http://localhost:7000/clients \
+  -H 'Content-Type: application/json' \
+  -d '{"nom":"Dupont","prenom":"Alice","mail":"alice@example.com","nbCommande":2}'
+
+# Remplacer 1 par l'identifiant renvoyé lors de la création.
+curl http://localhost:7000/clients/1
+
+curl -X PUT http://localhost:7000/clients/1 \
+  -H 'Content-Type: application/json' \
+  -d '{"nbCommande":3}'
+
+curl -X DELETE http://localhost:7000/clients/1
 ```
 
-### 3. Lancer MongoDB
+## Tests d'intégration
+
+Avec l'API et MySQL démarrés, depuis `carpart-client-api` :
 
 ```bash
-docker run -d --name carpart-mongo --network carpart-net -p 27017:27017 carpart-mongo
+python3 -m unittest discover -s tests -v
 ```
 
-### 4. Lancer l'API
-
-```bash
-docker run -d --name carpart-api --network carpart-net -p 8000:8000 \
-  -e MONGO_URL=mongodb://carpart-mongo:27017 \
-  carpart-api
-```
-
-### 5. Tester
-
-```bash
-curl http://localhost:8000/health
-curl -X POST http://localhost:8000/products -H "Content-Type: application/json" \
-  -d '{"name":"Plaquettes de frein","description":"AV - Clio 4","quantity":50,"price":29.99,"reference":"PF-CLIO4-AV"}'
-curl http://localhost:8000/products
-curl http://localhost:8000/docs
-```
-
-## Lancement local (sans Docker)
-
-```bash
-pip install -r requirements.txt
-# Lancer Mongo localement d'abord
-MONGO_URL=mongodb://localhost:27017 uvicorn app.main:app --reload
-```
+Ces tests HTTP vérifient le cycle création/consultation/modification/suppression,
+les validations et la connexion MySQL. Ils suppriment les fiches qu'ils créent.
+La variable `API_URL` permet de cibler une autre adresse.
